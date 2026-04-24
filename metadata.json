@@ -1,0 +1,6 @@
+{
+  "name": "جمعيتي - Jamiyati",
+  "description": "تطبيق لإدارة الجمعيات المالية التقليدية (الدوّارة) بالصوت والشفافية الكاملة، مصمم خصيصاً للسياق الاجتماعي اليمني.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": []
+}

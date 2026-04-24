@@ -1,0 +1,83 @@
+{
+  "entities": {
+    "Association": {
+      "title": "Association",
+      "description": "A financial association (Jamiya/Sanduq)",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "description": "Name of the association" },
+        "totalAmount": { "type": "number", "description": "Total payout amount for each cycle" },
+        "monthlyContribution": { "type": "number", "description": "Amount each member pays monthly" },
+        "memberCount": { "type": "integer", "description": "Number of members" },
+        "startDate": { "type": "string", "format": "date", "description": "When the association begins" },
+        "status": { "type": "string", "enum": ["active", "completed"], "description": "Current status" },
+        "directorUid": { "type": "string", "description": "UID of the user who created it" },
+        "rotationOrder": { "type": "array", "description": "Ordered UIDs or names of members for payouts" }
+      },
+      "required": ["name", "totalAmount", "monthlyContribution", "memberCount", "startDate", "directorUid"]
+    },
+    "Member": {
+      "title": "Member",
+      "description": "A participant in an association",
+      "type": "object",
+      "properties": {
+        "associationId": { "type": "string", "description": "ID of the target association" },
+        "uid": { "type": "string", "description": "Firebase Auth UID (optional if not registered yet)" },
+        "name": { "type": "string", "description": "Name of the member" },
+        "phone": { "type": "string", "description": "Phone number" },
+        "voiceAgreement": { "type": "string", "description": "Base64 audio string of the commitment" },
+        "role": { "type": "string", "enum": ["admin", "member"], "description": "Role in the group" },
+        "joinedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["associationId", "name", "phone", "role"]
+    },
+    "Payment": {
+      "title": "Payment",
+      "description": "A monthly contribution record",
+      "type": "object",
+      "properties": {
+        "associationId": { "type": "string" },
+        "memberId": { "type": "string" },
+        "month": { "type": "string", "description": "Year-Month e.g. 2024-05" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "paid"] },
+        "paidAt": { "type": "string", "format": "date-time" },
+        "voiceConfirmation": { "type": "string", "description": "Base64 audio of 'I paid'" }
+      },
+      "required": ["associationId", "memberId", "month", "status"]
+    },
+    "Payout": {
+      "title": "Payout",
+      "description": "A record of a member receiving the total amount",
+      "type": "object",
+      "properties": {
+        "associationId": { "type": "string" },
+        "memberId": { "type": "string" },
+        "month": { "type": "string" },
+        "amount": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "received"] },
+        "receivedAt": { "type": "string", "format": "date-time" },
+        "voiceReceipt": { "type": "string", "description": "Base64 audio of 'I received the full amount'" }
+      },
+      "required": ["associationId", "memberId", "month", "status"]
+    }
+  },
+  "firestore": {
+    "/associations/{associationId}": {
+      "schema": "Association",
+      "description": "Storage for association metadata"
+    },
+    "/associations/{associationId}/members/{memberId}": {
+      "schema": "Member",
+      "description": "Members of a specific association"
+    },
+    "/associations/{associationId}/payments/{paymentId}": {
+      "schema": "Payment",
+      "description": "Monthly payments tracked per association"
+    },
+    "/associations/{associationId}/payouts/{payoutId}": {
+      "schema": "Payout",
+      "description": "Payout records tracked per association"
+    }
+  }
+}
