@@ -50,6 +50,25 @@ service cloud.firestore {
           get(/databases/$(database)/documents/associations/$(associationId)).data.directorUid == request.auth.uid
         );
       }
+
+      // Dispute Subcollection
+      match /disputes/{disputeId} {
+        allow read: if isSignedIn(); // Basic read access for demo purposes. In production, restrict to reporter and admin.
+        allow create: if isSignedIn();
+        allow update: if isSignedIn() && (
+          get(/databases/$(database)/documents/associations/$(associationId)).data.directorUid == request.auth.uid || 
+          resource.data.reporterId == request.auth.uid ||
+          resource.data.targetId == request.auth.uid
+        );
+      }
+    }
+
+    match /users/{userId} {
+      match /notifications/{notificationId} {
+        allow read: if isOwner(userId);
+        allow create: if isSignedIn(); // Allow admins or system to create notifications
+        allow update: if isOwner(userId); // Mark as read
+      }
     }
   }
 }

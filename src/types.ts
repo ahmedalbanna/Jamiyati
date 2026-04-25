@@ -42,3 +42,29 @@ export interface Payout {
   receivedAt?: string;
   voiceReceipt?: string;
 }
+
+export interface Dispute {
+  id?: string;
+  associationId: string;
+  reporterId: string;
+  targetId?: string;
+  status: 'open' | 'resolved';
+  title: string;
+  description: string;
+  voiceStatement?: string;
+  voiceResponse?: string;
+  resolution?: string;
+  createdAt: string;
+  resolvedAt?: string;
+}
+
+export interface Notification {
+  id?: string;
+  userId: string;
+  associationId: string;
+  title: string;
+  body: string;
+  createdAt: string;
+  isRead: boolean;
+}
+

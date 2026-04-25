@@ -60,6 +60,39 @@
         "voiceReceipt": { "type": "string", "description": "Base64 audio of 'I received the full amount'" }
       },
       "required": ["associationId", "memberId", "month", "status"]
+    },
+    "Dispute": {
+      "title": "Dispute",
+      "description": "A dispute resolution record",
+      "type": "object",
+      "properties": {
+        "associationId": { "type": "string" },
+        "reporterId": { "type": "string" },
+        "targetId": { "type": "string" },
+        "status": { "type": "string", "enum": ["open", "resolved"] },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "voiceStatement": { "type": "string" },
+        "voiceResponse": { "type": "string" },
+        "resolution": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "resolvedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["associationId", "reporterId", "status", "title", "createdAt"]
+    },
+    "Notification": {
+      "title": "Notification",
+      "description": "In-app notification for users",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string" },
+        "associationId": { "type": "string" },
+        "title": { "type": "string" },
+        "body": { "type": "string" },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "isRead": { "type": "boolean" }
+      },
+      "required": ["userId", "title", "createdAt", "isRead"]
     }
   },
   "firestore": {
@@ -78,6 +111,14 @@
     "/associations/{associationId}/payouts/{payoutId}": {
       "schema": "Payout",
       "description": "Payout records tracked per association"
+    },
+    "/associations/{associationId}/disputes/{disputeId}": {
+      "schema": "Dispute",
+      "description": "Dispute records tracked per association"
+    },
+    "/users/{userId}/notifications/{notificationId}": {
+      "schema": "Notification",
+      "description": "User notifications"
     }
   }
 }

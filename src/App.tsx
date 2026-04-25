@@ -20,7 +20,9 @@ import {
   ArrowRight,
   LogOut,
   Play,
-  Square
+  Square,
+  Bell,
+  Scale
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { auth, db } from './firebase';
@@ -43,7 +45,7 @@ import {
   serverTimestamp,
   orderBy
 } from 'firebase/firestore';
-import { Association, Member, Payment, Payout } from './types';
+import { Association, Member, Payment, Payout, Dispute, Notification as AppNotification } from './types';
 
 // Global Error Handler for Firestore
 function handleFirestoreError(error: any, op: string, path: string) {
@@ -57,6 +59,8 @@ export default function App() {
   const [activeAssociation, setActiveAssociation] = useState<Association | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [view, setView] = useState<'dashboard' | 'association' | 'members'>('dashboard');
+  const [notifications, setNotifications] = useState<AppNotification[]>([]);
+  const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -69,6 +73,7 @@ export default function App() {
   useEffect(() => {
     if (!user) {
       setAssociations([]);
+      setNotifications([]);
       return;
     }
 
@@ -82,7 +87,18 @@ export default function App() {
       setAssociations(list);
     }, (err) => handleFirestoreError(err, 'list', 'associations'));
 
-    return unsubscribe;
+    const notifQ = query(
+      collection(db, 'users', user.uid, 'notifications'),
+      orderBy('createdAt', 'desc')
+    );
+    const unsubscribeNotif = onSnapshot(notifQ, (snapshot) => {
+      setNotifications(snapshot.docs.map(d => ({ id: d.id, ...d.data() } as AppNotification)));
+    }, (err) => handleFirestoreError(err, 'list', 'notifications'));
+
+    return () => {
+      unsubscribe();
+      unsubscribeNotif();
+    };
   }, [user]);
 
   const login = async () => {
@@ -122,6 +138,47 @@ export default function App() {
              <p className="text-lg font-black text-primary-green">
                {associations.reduce((acc, a) => acc + (a.totalAmount || 0), 0).toLocaleString()} <span className="text-[10px]">ريال</span>
              </p>
+          </div>
+          <div className="relative">
+            <button 
+              onClick={() => setShowNotifications(!showNotifications)}
+              className="p-2 text-stone-400 hover:text-stone-800 transition-colors relative"
+            >
+              <Bell className="w-5 h-5" />
+              {notifications.some(n => !n.isRead) && (
+                <span className="absolute top-2 left-2 w-2 h-2 bg-red-500 rounded-full"></span>
+              )}
+            </button>
+            <AnimatePresence>
+              {showNotifications && (
+                <motion.div 
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: 10 }}
+                  className="absolute left-0 mt-2 w-72 bg-white rounded-2xl shadow-xl border border-stone-100 overflow-hidden z-50 text-right"
+                >
+                  <div className="p-4 border-b border-stone-100 flex items-center justify-between">
+                    <h3 className="font-black text-stone-800 text-sm">التنبيهات</h3>
+                  </div>
+                  <div className="max-h-64 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <div className="p-4 text-center text-xs font-bold text-stone-400">
+                        لا توجد تنبيهات جديدة
+                      </div>
+                    ) : (
+                      notifications.map(n => (
+                        <div key={n.id} className={`p-4 border-b border-stone-50 ${n.isRead ? 'opacity-50' : 'bg-primary-green/5'}`} onClick={async () => {
+                          if (!n.isRead) await updateDoc(doc(db, 'users', user.uid, 'notifications', n.id!), { isRead: true });
+                        }}>
+                          <p className="font-bold text-stone-800 text-xs">{n.title}</p>
+                          <p className="text-[10px] text-stone-500 mt-1">{n.body}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
           <div className="w-10 h-10 rounded-full overflow-hidden border-2 border-primary-green p-0.5">
             <img src={user.photoURL || ''} alt={user.displayName || ''} className="w-full h-full rounded-full" referrerPolicy="no-referrer" />
@@ -259,6 +316,24 @@ function Dashboard({ associations, onSelect, onCreate }: {
           <h2 className="text-3xl font-black text-stone-900 tracking-tight">نشاطك</h2>
           <p className="text-stone-500 font-medium italic">لديك {associations.length} جمعيات نشطة</p>
         </div>
+        <button 
+          onClick={async () => {
+            const userId = auth.currentUser?.uid;
+            if (!userId) return;
+            await addDoc(collection(db, 'users', userId, 'notifications'), {
+              userId,
+              associationId: 'simulator',
+              title: 'تذكير بموعد القسط',
+              body: 'اقترب موعد سداد القسط الشهري. حافظ على التزامك لتتجنب الإحراج.',
+              createdAt: new Date().toISOString(),
+              isRead: false
+            });
+          }}
+          className="bg-stone-100 text-stone-500 p-3 rounded-2xl hover:bg-stone-200 transition-colors"
+          title="محاكاة إشعار"
+        >
+          <Bell className="w-5 h-5" />
+        </button>
       </div>
 
       <div className="space-y-6">
@@ -424,8 +499,9 @@ function CreateAssociation({ onCancel, onCreated, user }: {
 function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () => void }) {
   const [members, setMembers] = useState<Member[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
+  const [disputes, setDisputes] = useState<Dispute[]>([]);
   const [isAddingMember, setIsAddingMember] = useState(false);
-  const [showVoiceRecorder, setShowVoiceRecorder] = useState<{ isOpen: boolean, type: 'agreement' | 'payment', targetId?: string }>({ isOpen: false, type: 'agreement' });
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState<{ isOpen: boolean, type: 'agreement' | 'payment' | 'dispute' | 'dispute_response', targetId?: string }>({ isOpen: false, type: 'agreement' });
 
   useEffect(() => {
     const q = collection(db, 'associations', assoc.id!, 'members');
@@ -441,7 +517,15 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
     });
   }, [assoc.id]);
 
-  const [activeTab, setActiveTab] = useState<'members' | 'payments' | 'payouts'>('members');
+  useEffect(() => {
+    const q = collection(db, 'associations', assoc.id!, 'disputes');
+    return onSnapshot(q, (s) => {
+      setDisputes(s.docs.map(d => ({ id: d.id, ...d.data() } as Dispute)));
+    });
+  }, [assoc.id]);
+
+  const [activeTab, setActiveTab] = useState<'members' | 'payments' | 'payouts' | 'disputes'>('members');
+  const [selectedMember, setSelectedMember] = useState<Member | null>(null);
 
   return (
     <motion.div 
@@ -460,16 +544,17 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
       </div>
 
       {/* Tabs */}
-      <div className="flex bg-stone-100 p-1 rounded-2xl">
+      <div className="flex bg-stone-100 p-1 rounded-2xl overflow-x-auto">
         {[
           { id: 'members', label: 'الأعضاء', icon: Users },
           { id: 'payments', label: 'الأقساط', icon: DollarSign },
-          { id: 'payouts', label: 'الاستلام', icon: Wallet }
+          { id: 'payouts', label: 'الاستلام', icon: Wallet },
+          { id: 'disputes', label: 'المنازعات', icon: Info }
         ].map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id as any)}
-            className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl transition-all font-bold text-sm ${
+            className={`flex-1 min-w-[80px] flex items-center justify-center gap-2 py-3 rounded-xl transition-all font-bold text-sm ${
               activeTab === tab.id 
               ? 'bg-white text-stone-900 shadow-sm' 
               : 'text-stone-400 hover:text-stone-600'
@@ -511,9 +596,9 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
 
             <div className="space-y-3">
               {members.map((m) => (
-                <div key={m.id} className="bg-white p-5 rounded-3xl border border-stone-100 shadow-sm flex items-center justify-between group">
+                <div key={m.id} onClick={() => setSelectedMember(m)} className="bg-white p-5 rounded-3xl border border-stone-100 shadow-sm flex items-center justify-between group cursor-pointer hover:border-primary-green/30 transition-all">
                   <div className="flex items-center gap-4">
-                    <div className="w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center text-stone-400">
+                    <div className="w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 group-hover:bg-primary-green/5 group-hover:text-primary-green transition-colors">
                       <User className="w-6 h-6" />
                     </div>
                     <div>
@@ -528,7 +613,7 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
                       </div>
                     ) : (
                       <button 
-                        onClick={() => setShowVoiceRecorder({ isOpen: true, type: 'agreement', targetId: m.id })}
+                        onClick={(e) => { e.stopPropagation(); setShowVoiceRecorder({ isOpen: true, type: 'agreement', targetId: m.id }); }}
                         className="p-4 bg-stone-50 text-stone-400 rounded-2xl hover:text-primary-green hover:bg-emerald-50 transition-all opacity-100"
                       >
                         <Mic className="w-5 h-5" />
@@ -569,6 +654,74 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
             <PayoutsList assoc={assoc} members={members} />
           </motion.div>
         )}
+
+        {activeTab === 'disputes' && (
+          <motion.div 
+            key="disputes"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            <div className="flex items-center justify-between px-1">
+              <h3 className="text-xl font-black text-stone-900">سجل المنازعات</h3>
+              <button 
+                onClick={() => setShowVoiceRecorder({ isOpen: true, type: 'dispute' })}
+                className="text-red-500 font-black text-xs uppercase tracking-widest flex items-center gap-2 hover:bg-red-50 px-4 py-2 rounded-2xl transition-all border border-red-100"
+              >
+                <Plus className="w-4 h-4" /> رفع ملاحظة / نزاع
+              </button>
+            </div>
+            
+            <div className="space-y-4">
+              {disputes.length === 0 ? (
+                <div className="p-10 bento-card text-center border-dashed border-2">
+                  <Info className="w-10 h-10 text-stone-300 mx-auto mb-3" />
+                  <p className="font-bold text-stone-500">لا توجد منازعات أو ملاحظات مسجلة.</p>
+                </div>
+              ) : (
+                disputes.map(d => (
+                  <div key={d.id} className="bento-card p-6 space-y-4">
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-black text-stone-800">{d.title}</h4>
+                        <p className="text-xs font-bold text-stone-400 mt-1">{new Date(d.createdAt).toLocaleDateString()}</p>
+                      </div>
+                      <span className={`px-4 py-1 rounded-full text-[10px] font-black uppercase tracking-widest ${
+                        d.status === 'resolved' ? 'bg-emerald-50 text-emerald-600' : 'bg-red-50 text-red-600'
+                      }`}>
+                        {d.status === 'resolved' ? 'تم الحل' : 'مفتوح'}
+                      </span>
+                    </div>
+                    
+                    {d.voiceStatement && (
+                      <div className="bg-stone-50 p-4 rounded-2xl">
+                        <p className="text-[10px] font-black text-stone-400 uppercase tracking-widest mb-2">تسجيل الشكوى</p>
+                        <audio src={d.voiceStatement} controls className="w-full h-10" />
+                      </div>
+                    )}
+
+                    {d.voiceResponse ? (
+                      <div className="bg-emerald-50 p-4 rounded-2xl">
+                        <p className="text-[10px] font-black text-emerald-600 uppercase tracking-widest mb-2">رد الإدارة (الحل)</p>
+                        <audio src={d.voiceResponse} controls className="w-full h-10" />
+                      </div>
+                    ) : (
+                      assoc.directorUid === auth.currentUser?.uid && (
+                        <button 
+                          onClick={() => setShowVoiceRecorder({ isOpen: true, type: 'dispute_response', targetId: d.id })}
+                          className="w-full bg-stone-100 text-stone-600 py-3 rounded-xl font-bold text-xs hover:bg-stone-200 transition-colors"
+                        >
+                          إضافة رد صوتي للإغلاق
+                        </button>
+                      )
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <VoiceRecorderModal 
@@ -591,10 +744,37 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
               paidAt: new Date().toISOString(),
               voiceConfirmation: base64
             });
+          } else if (showVoiceRecorder.type === 'dispute') {
+            await addDoc(collection(db, 'associations', assoc.id!, 'disputes'), {
+              associationId: assoc.id!,
+              reporterId: auth.currentUser?.uid,
+              status: 'open',
+              title: 'نزاع جديد مسجل صوتياً',
+              description: 'تم تسجيل هذا النزاع عبر الميزة الصوتية',
+              voiceStatement: base64,
+              createdAt: new Date().toISOString()
+            });
+          } else if (showVoiceRecorder.type === 'dispute_response' && showVoiceRecorder.targetId) {
+            await updateDoc(doc(db, 'associations', assoc.id!, 'disputes', showVoiceRecorder.targetId), {
+              voiceResponse: base64,
+              status: 'resolved',
+              resolvedAt: new Date().toISOString()
+            });
           }
           setShowVoiceRecorder({ ...showVoiceRecorder, isOpen: false });
         }}
       />
+
+      <AnimatePresence>
+        {selectedMember && (
+          <MemberProfileModal 
+            member={selectedMember}
+            assoc={assoc}
+            payments={payments}
+            onClose={() => setSelectedMember(null)}
+          />
+        )}
+      </AnimatePresence>
     </motion.div>
   );
 }
@@ -689,14 +869,32 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
 
 function PayoutsList({ assoc, members }: { assoc: Association, members: Member[] }) {
   const currentMonth = new Date().toISOString().slice(0, 7);
+  const isDirector = auth.currentUser?.uid === assoc.directorUid;
+  const rotationOrder = assoc.rotationOrder || [];
+  const unassignedMembers = members.filter(m => !rotationOrder.includes(m.id!));
   
+  const handleAssignToOrder = async (memberId: string) => {
+    if (!isDirector) return;
+    const newOrder = [...rotationOrder, memberId];
+    await updateDoc(doc(db, 'associations', assoc.id!), { rotationOrder: newOrder });
+  };
+
+  const handleRemoveFromOrder = async (memberId: string) => {
+    if (!isDirector) return;
+    const newOrder = rotationOrder.filter(id => id !== memberId);
+    await updateDoc(doc(db, 'associations', assoc.id!), { rotationOrder: newOrder });
+  };
+
+  const currentReceiverId = rotationOrder[0];
+  const currentReceiver = members.find(m => m.id === currentReceiverId) || members[0];
+
   return (
     <div className="space-y-8">
-      {members.length > 0 ? (
-        <div className="bento-card-primary p-10 min-h-[300px] flex flex-col justify-between">
+      {currentReceiver ? (
+        <div className="bento-card-primary p-10 min-h-[300px] flex flex-col justify-between relative overflow-hidden">
           <div className="relative z-10">
             <h4 className="text-emerald-200 uppercase tracking-[0.2em] text-[10px] font-black mb-6">الدور القادم</h4>
-            <p className="text-5xl font-black mb-3 tracking-tighter">{members[0].name}</p>
+            <p className="text-5xl font-black mb-3 tracking-tighter">{currentReceiver.name}</p>
             <p className="text-emerald-100/60 font-bold">تاريخ الاستحقاق المتوقع: {currentMonth}</p>
             
             <div className="mt-12 bg-white/10 backdrop-blur-xl rounded-3xl p-6 border border-white/20 inline-block w-full">
@@ -705,11 +903,60 @@ function PayoutsList({ assoc, members }: { assoc: Association, members: Member[]
             </div>
           </div>
           
-          {/* Decorative background elements */}
           <div className="absolute -bottom-12 -left-12 w-64 h-64 bg-emerald-700/50 rounded-full blur-3xl"></div>
           <div className="absolute -top-12 -right-12 w-48 h-48 bg-emerald-400/10 rounded-full blur-3xl"></div>
         </div>
       ) : null}
+
+      <div className="bento-card p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="font-black text-stone-800 text-lg">ترتيب الاستلام</h3>
+          {isDirector && <span className="text-[10px] text-stone-400 font-bold uppercase tracking-widest">المشرف فقط</span>}
+        </div>
+        
+        <div className="space-y-4">
+          {rotationOrder.map((mId, idx) => {
+            const m = members.find(mem => mem.id === mId);
+            if (!m) return null;
+            return (
+              <div key={mId} className="flex items-center justify-between bg-stone-50 p-4 rounded-2xl border border-stone-100">
+                <div className="flex items-center gap-4">
+                  <div className="w-8 h-8 rounded-full bg-primary-green text-white flex items-center justify-center font-black text-sm">
+                    {idx + 1}
+                  </div>
+                  <span className="font-bold text-stone-800">{m.name}</span>
+                </div>
+                {isDirector && (
+                  <button onClick={() => handleRemoveFromOrder(mId)} className="text-red-500 hover:bg-red-50 p-2 rounded-xl transition-colors">
+                    إزالة
+                  </button>
+                )}
+              </div>
+            );
+          })}
+          
+          {rotationOrder.length === 0 && (
+            <p className="text-stone-400 text-xs font-bold text-center py-4">لم يتم تحديد ترتيب الاستلام بعد</p>
+          )}
+        </div>
+
+        {isDirector && unassignedMembers.length > 0 && (
+          <div className="mt-8 pt-6 border-t border-stone-100">
+            <h4 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">أعضاء لم يحدد دورهم</h4>
+            <div className="flex flex-wrap gap-2">
+              {unassignedMembers.map(m => (
+                <button 
+                  key={m.id}
+                  onClick={() => handleAssignToOrder(m.id!)}
+                  className="bg-white border border-stone-200 px-4 py-2 rounded-full text-xs font-bold text-stone-600 hover:border-primary-green hover:text-primary-green transition-colors"
+                >
+                  + {m.name}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
 
       <div className="grid grid-cols-2 gap-4">
         <div className="bento-card-secondary p-8 flex flex-col justify-between aspect-square">
@@ -742,6 +989,82 @@ function PayoutsList({ assoc, members }: { assoc: Association, members: Member[]
            </button>
         </div>
       </div>
+    </div>
+  );
+}
+
+function MemberProfileModal({ 
+  member, 
+  assoc, 
+  onClose,
+  payments
+}: { 
+  member: Member, 
+  assoc: Association, 
+  onClose: () => void,
+  payments: Payment[]
+}) {
+  const memberPayments = payments.filter(p => p.memberId === member.id && p.voiceConfirmation);
+
+  return (
+    <div className="fixed inset-0 bg-stone-900/40 backdrop-blur-sm z-[100] flex items-end sm:items-center justify-center p-0 sm:p-6">
+      <motion.div 
+        initial={{ opacity: 0, y: 100 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: 100 }}
+        className="bg-stone-50 w-full max-w-lg rounded-t-[2.5rem] sm:rounded-[2.5rem] p-6 sm:p-8 space-y-6 shadow-2xl h-[85vh] sm:h-auto overflow-y-auto"
+      >
+        <div className="flex items-center justify-between sticky top-0 bg-stone-50 pt-2 pb-4 z-10 border-b border-stone-200">
+          <div className="flex items-center gap-4">
+            <div className="w-14 h-14 bg-primary-green rounded-full flex items-center justify-center text-white">
+              <span className="text-2xl font-black">{member.name.charAt(0)}</span>
+            </div>
+            <div>
+              <h2 className="text-2xl font-black text-stone-900">{member.name}</h2>
+              <p className="text-sm font-bold text-stone-500">{member.phone}</p>
+            </div>
+          </div>
+          <button onClick={onClose} className="p-3 bg-white rounded-full text-stone-400 hover:bg-stone-200 transition-colors">
+            <LogOut className="w-5 h-5 flip-h" />
+          </button>
+        </div>
+
+        <div className="space-y-6">
+          <div className="bento-card p-6">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">التزام العضو</h3>
+            {member.voiceAgreement ? (
+              <div className="bg-emerald-50 rounded-2xl p-4 flex flex-col gap-3">
+                <div className="flex items-center gap-2 text-emerald-600">
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span className="font-bold text-sm">موافق على الشروط</span>
+                </div>
+                <audio src={member.voiceAgreement} controls className="w-full h-10" />
+              </div>
+            ) : (
+              <p className="text-sm font-bold text-stone-500">لم يتم تسجيل الالتزام الصوتي بعد.</p>
+            )}
+          </div>
+
+          <div className="bento-card p-6">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">سجل التأكيدات الصوتية (الدفع)</h3>
+            <div className="space-y-4">
+              {memberPayments.length === 0 ? (
+                <p className="text-sm font-bold text-stone-500">لا توجد تسجيلات دفع.</p>
+              ) : (
+                memberPayments.map(p => (
+                  <div key={p.id} className="bg-stone-50 p-4 rounded-2xl space-y-3">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-black text-stone-800 tracking-widest uppercase">تأكيد دفع القسط</span>
+                      <span className="text-[10px] font-black text-stone-400">{p.month}</span>
+                    </div>
+                    <audio src={p.voiceConfirmation} controls className="w-full h-10" />
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </motion.div>
     </div>
   );
 }
@@ -864,12 +1187,19 @@ function VoiceRecorderModal({ isOpen, type, onClose, onSave }: {
 
         <div className="space-y-3">
           <h3 className="text-3xl font-black text-stone-900 tracking-tighter">
-            {type === 'agreement' ? 'تسجيل الالتزام' : 'توثيق الدفع'}
+            {type === 'agreement' ? 'تسجيل الالتزام' 
+             : type === 'payment' ? 'توثيق الدفع'
+             : type === 'dispute' ? 'تسجيل الخلاف / الملاحظة'
+             : 'تسجيل الرد'}
           </h3>
           <p className="text-stone-500 font-bold px-4 leading-relaxed bg-stone-50 py-4 rounded-3xl text-sm italic border border-stone-100">
             {type === 'agreement' 
               ? 'قل بلهجة واضحة: "قبلت وأنا ملتزم بالدفع في الموعد المحدد لجمعيتي." ' 
-              : 'قل بلهجة واضحة: "أقر بأني سلمت القسط لجمعيتي لشهر كذا نقداً وبالوفاء."'}
+              : type === 'payment'
+              ? 'قل بلهجة واضحة: "أقر بأني سلمت القسط لجمعيتي لشهر كذا نقداً وبالوفاء."'
+              : type === 'dispute'
+              ? 'أفصح عن المشكلة بوضوح واختصار.'
+              : 'قم بالرد على النزاع بصوتك لحل المشكلة.'}
           </p>
         </div>
 
