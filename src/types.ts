@@ -8,6 +8,8 @@ export interface Association {
   status: 'active' | 'completed';
   directorUid: string;
   rotationOrder: string[];
+  isEmergencyFund?: boolean;
+  notificationSound?: string;
 }
 
 export interface Member {
@@ -19,6 +21,7 @@ export interface Member {
   voiceAgreement?: string;
   role: 'admin' | 'member';
   joinedAt?: string;
+  notificationSound?: string;
 }
 
 export interface Payment {

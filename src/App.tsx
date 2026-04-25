@@ -299,6 +299,58 @@ function LandingPage({ login }: { login: () => void }) {
   );
 }
 
+function DashboardAssociationCard({ a, onSelect }: { a: Association, onSelect: (a: Association) => void }) {
+  const [payments, setPayments] = useState<Payment[]>([]);
+  
+  useEffect(() => {
+    if (!a.id) return;
+    const q = collection(db, 'associations', a.id, 'payments');
+    const unsubscribe = onSnapshot(q, (s) => {
+      setPayments(s.docs.map(d => ({ id: d.id, ...d.data() } as Payment)));
+    }, (err) => handleFirestoreError(err, 'list', 'payments'));
+    return unsubscribe;
+  }, [a.id]);
+
+  const totalExpectedPayments = a.memberCount * a.memberCount;
+  const progressPercent = totalExpectedPayments > 0 ? (payments.length / totalExpectedPayments) * 100 : 0;
+
+  return (
+    <motion.div
+      layoutId={a.id}
+      onClick={() => onSelect(a)}
+      className="group bento-card p-6 cursor-pointer hover:border-primary-green/30 space-y-4"
+    >
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-5">
+          <div className="w-16 h-16 bg-stone-50 rounded-[1.5rem] border border-stone-100 flex items-center justify-center group-hover:bg-primary-green/5 transition-colors">
+            <span className="text-2xl font-black text-primary-green">{a.name.charAt(0)}</span>
+          </div>
+          <div>
+            <h3 className="text-xl font-black text-stone-800 tracking-tight">{a.name}</h3>
+            <div className="flex items-center gap-3 text-stone-500 text-xs font-black uppercase tracking-widest mt-2">
+              <span className="flex items-center gap-1 text-primary-green"><Users className="w-3 h-3" /> {a.memberCount} عضو</span>
+              <span className="w-1 h-1 bg-stone-200 rounded-full"></span>
+              <span className="text-stone-400">{a.totalAmount.toLocaleString()} ريال</span>
+            </div>
+          </div>
+        </div>
+        <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center group-hover:bg-primary-green group-hover:text-white transition-all">
+          <ChevronRight className="w-5 h-5 flip-h" />
+        </div>
+      </div>
+      <div className="space-y-1">
+        <div className="flex justify-between text-[10px] font-black uppercase tracking-widest text-stone-400">
+          <span>{payments.length} الدفعات</span>
+          <span>{Math.round(progressPercent)}%</span>
+        </div>
+        <div className="w-full h-2 bg-stone-100 rounded-full overflow-hidden">
+          <div style={{ width: `${Math.min(100, Math.max(0, progressPercent))}%` }} className="h-full bg-primary-green rounded-full transition-all duration-1000"></div>
+        </div>
+      </div>
+    </motion.div>
+  );
+}
+
 function Dashboard({ associations, onSelect, onCreate }: { 
   associations: Association[], 
   onSelect: (a: Association) => void,
@@ -355,29 +407,7 @@ function Dashboard({ associations, onSelect, onCreate }: {
           </div>
         ) : (
           associations.map((a) => (
-            <motion.div
-              layoutId={a.id}
-              key={a.id}
-              onClick={() => onSelect(a)}
-              className="group bento-card p-6 cursor-pointer flex items-center justify-between hover:border-primary-green/30"
-            >
-              <div className="flex items-center gap-5">
-                <div className="w-16 h-16 bg-stone-50 rounded-[1.5rem] border border-stone-100 flex items-center justify-center group-hover:bg-primary-green/5 transition-colors">
-                  <span className="text-2xl font-black text-primary-green">{a.name.charAt(0)}</span>
-                </div>
-                <div>
-                  <h3 className="text-xl font-black text-stone-800 tracking-tight">{a.name}</h3>
-                  <div className="flex items-center gap-3 text-stone-500 text-xs font-black uppercase tracking-widest mt-2">
-                    <span className="flex items-center gap-1 text-primary-green"><Users className="w-3 h-3" /> {a.memberCount} عضو</span>
-                    <span className="w-1 h-1 bg-stone-200 rounded-full"></span>
-                    <span className="text-stone-400">{a.totalAmount.toLocaleString()} ريال</span>
-                  </div>
-                </div>
-              </div>
-              <div className="w-10 h-10 rounded-full bg-stone-50 flex items-center justify-center group-hover:bg-primary-green group-hover:text-white transition-all">
-                <ChevronRight className="w-5 h-5 flip-h" />
-              </div>
-            </motion.div>
+            <DashboardAssociationCard key={a.id} a={a} onSelect={onSelect} />
           ))
         )}
       </div>
@@ -500,8 +530,9 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
   const [members, setMembers] = useState<Member[]>([]);
   const [payments, setPayments] = useState<Payment[]>([]);
   const [disputes, setDisputes] = useState<Dispute[]>([]);
+  const [payouts, setPayouts] = useState<Payout[]>([]);
   const [isAddingMember, setIsAddingMember] = useState(false);
-  const [showVoiceRecorder, setShowVoiceRecorder] = useState<{ isOpen: boolean, type: 'agreement' | 'payment' | 'dispute' | 'dispute_response', targetId?: string }>({ isOpen: false, type: 'agreement' });
+  const [showVoiceRecorder, setShowVoiceRecorder] = useState<{ isOpen: boolean, type: 'agreement' | 'payment' | 'dispute' | 'dispute_response' | 'payout_receipt', targetId?: string }>({ isOpen: false, type: 'agreement' });
 
   useEffect(() => {
     const q = collection(db, 'associations', assoc.id!, 'members');
@@ -524,8 +555,18 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
     });
   }, [assoc.id]);
 
-  const [activeTab, setActiveTab] = useState<'members' | 'payments' | 'payouts' | 'disputes'>('members');
+  useEffect(() => {
+    const q = collection(db, 'associations', assoc.id!, 'payouts');
+    return onSnapshot(q, (s) => {
+      setPayouts(s.docs.map(d => ({ id: d.id, ...d.data() } as Payout)));
+    });
+  }, [assoc.id]);
+
+  const [activeTab, setActiveTab] = useState<'members' | 'payments' | 'payouts' | 'disputes' | 'settings'>('members');
   const [selectedMember, setSelectedMember] = useState<Member | null>(null);
+  const [memberSearchQuery, setMemberSearchQuery] = useState('');
+
+  const filteredMembers = members.filter(m => m.name.toLowerCase().includes(memberSearchQuery) || m.phone.includes(memberSearchQuery));
 
   return (
     <motion.div 
@@ -533,14 +574,33 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
       animate={{ opacity: 1 }}
       className="space-y-8"
     >
-      <div className="flex items-center gap-4">
-        <button onClick={onBack} className="p-3 bg-white rounded-full shadow-sm hover:bg-stone-50 transition-colors">
-          <ArrowRight className="w-5 h-5 ml-2" />
-        </button>
-        <div>
-          <h2 className="text-3xl font-black text-stone-900 tracking-tight">{assoc.name}</h2>
-          <p className="text-stone-500 font-medium">الميزانية الكلية: {assoc.totalAmount.toLocaleString()} ر.ي</p>
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-3 bg-white rounded-full shadow-sm hover:bg-stone-50 transition-colors">
+            <ArrowRight className="w-5 h-5 ml-2" />
+          </button>
+          <div>
+            <h2 className="text-3xl font-black text-stone-900 tracking-tight flex items-center gap-2">
+              {assoc.name}
+              {assoc.isEmergencyFund && <span className="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full uppercase tracking-widest leading-none mt-1">حالة طوارئ</span>}
+            </h2>
+            <p className="text-stone-500 font-medium">{assoc.isEmergencyFund ? 'صندوق טوارئ إنساني' : `الميزانية الكلية: ${assoc.totalAmount.toLocaleString()} ر.ي`}</p>
+          </div>
         </div>
+
+        {assoc.directorUid === auth.currentUser?.uid && !assoc.isEmergencyFund && (
+          <button 
+            onClick={async () => {
+              if (window.confirm('هل أنت متأكد من تحويل هذه الجمعية إلى صندوق طوارئ خيري؟')) {
+                await updateDoc(doc(db, 'associations', assoc.id!), { isEmergencyFund: true });
+              }
+            }}
+            className="flex items-center gap-2 bg-red-50 text-red-600 p-3 rounded-2xl font-black text-xs hover:bg-red-100 transition-colors shadow-sm"
+          >
+            <Scale className="w-4 h-4" />
+            تفعيل كحالة طوارئ
+          </button>
+        )}
       </div>
 
       {/* Tabs */}
@@ -549,7 +609,8 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
           { id: 'members', label: 'الأعضاء', icon: Users },
           { id: 'payments', label: 'الأقساط', icon: DollarSign },
           { id: 'payouts', label: 'الاستلام', icon: Wallet },
-          { id: 'disputes', label: 'المنازعات', icon: Info }
+          { id: 'disputes', label: 'المنازعات', icon: Info },
+          ...(assoc.directorUid === auth.currentUser?.uid ? [{ id: 'settings', label: 'إعدادات', icon: Settings }] : [])
         ].map(tab => (
           <button
             key={tab.id}
@@ -585,6 +646,15 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
               </button>
             </div>
 
+            <div className="relative">
+              <input 
+                placeholder="البحث بالاسم أو رقم الهاتف..."
+                className="w-full bg-stone-50 border-stone-100 rounded-2xl py-3 px-5 font-bold outline-none focus:ring-2 focus:ring-primary-green/20 text-sm transition-all text-right"
+                value={memberSearchQuery}
+                onChange={(e) => setMemberSearchQuery(e.target.value.toLowerCase())}
+              />
+            </div>
+
             <AnimatePresence>
               {isAddingMember && (
                 <AddMemberForm 
@@ -595,8 +665,8 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
             </AnimatePresence>
 
             <div className="space-y-3">
-              {members.map((m) => (
-                <div key={m.id} onClick={() => setSelectedMember(m)} className="bg-white p-5 rounded-3xl border border-stone-100 shadow-sm flex items-center justify-between group cursor-pointer hover:border-primary-green/30 transition-all">
+              {filteredMembers.map((m) => (
+                <div key={m.id} data-name={m.name} data-phone={m.phone} onClick={() => setSelectedMember(m)} className="member-row bg-white p-5 rounded-3xl border border-stone-100 shadow-sm flex items-center justify-between group cursor-pointer hover:border-primary-green/30 transition-all">
                   <div className="flex items-center gap-4">
                     <div className="w-12 h-12 bg-stone-100 rounded-full flex items-center justify-center text-stone-400 group-hover:bg-primary-green/5 group-hover:text-primary-green transition-colors">
                       <User className="w-6 h-6" />
@@ -651,7 +721,12 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
             exit={{ opacity: 0, y: -10 }}
             className="space-y-4"
           >
-            <PayoutsList assoc={assoc} members={members} />
+            <PayoutsList 
+              assoc={assoc} 
+              members={members} 
+              payouts={payouts}
+              onMarkReceived={(mId, month) => setShowVoiceRecorder({ isOpen: true, type: 'payout_receipt', targetId: `${mId}:${month}` })} 
+            />
           </motion.div>
         )}
 
@@ -722,13 +797,51 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
             </div>
           </motion.div>
         )}
+
+        {activeTab === 'settings' && assoc.directorUid === auth.currentUser?.uid && (
+          <motion.div 
+            key="settings"
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -10 }}
+            className="space-y-4"
+          >
+            <div className="bento-card p-8 space-y-6">
+              <div>
+                <h3 className="text-xl font-black text-stone-900 tracking-tight mb-2">إعدادات الإشعارات</h3>
+                <p className="text-stone-500 font-bold text-sm">تخصيص نغمة الإشعارات الافتراضية لهذه الجمعية.</p>
+              </div>
+
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-[10px] uppercase font-black text-stone-400">نغمة الإشعار الأساسية</label>
+                  <select 
+                    value={assoc.notificationSound || 'default'}
+                    onChange={async (e) => {
+                      await updateDoc(doc(db, 'associations', assoc.id!), {
+                        notificationSound: e.target.value
+                      });
+                    }}
+                    className="w-full bg-stone-50 border-stone-100 rounded-2xl py-4 px-5 font-bold outline-none focus:ring-2 focus:ring-primary-green/20 transition-all text-sm"
+                  >
+                    <option value="default">الافتراضية (رنين هادئ)</option>
+                    <option value="urgent">عاجل (تنبيه قوي)</option>
+                    <option value="success">نجاح (رنين مبهج)</option>
+                    <option value="chime">رنين جرس (كلاسيكي)</option>
+                    <option value="silent">صامت</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+          </motion.div>
+        )}
       </AnimatePresence>
 
       <VoiceRecorderModal 
         isOpen={showVoiceRecorder.isOpen}
         type={showVoiceRecorder.type}
         onClose={() => setShowVoiceRecorder({ ...showVoiceRecorder, isOpen: false })}
-        onSave={async (base64) => {
+        onSave={async (base64, title, desc) => {
           if (showVoiceRecorder.type === 'agreement' && showVoiceRecorder.targetId) {
             await updateDoc(doc(db, 'associations', assoc.id!, 'members', showVoiceRecorder.targetId), {
               voiceAgreement: base64
@@ -744,13 +857,24 @@ function AssociationDetail({ assoc, onBack }: { assoc: Association, onBack: () =
               paidAt: new Date().toISOString(),
               voiceConfirmation: base64
             });
+          } else if (showVoiceRecorder.type === 'payout_receipt' && showVoiceRecorder.targetId) {
+            const [mId, month] = showVoiceRecorder.targetId.split(':');
+            await addDoc(collection(db, 'associations', assoc.id!, 'payouts'), {
+              associationId: assoc.id!,
+              memberId: mId,
+              month,
+              amount: assoc.totalAmount,
+              status: 'received',
+              receivedAt: new Date().toISOString(),
+              voiceReceipt: base64
+            });
           } else if (showVoiceRecorder.type === 'dispute') {
             await addDoc(collection(db, 'associations', assoc.id!, 'disputes'), {
               associationId: assoc.id!,
               reporterId: auth.currentUser?.uid,
               status: 'open',
-              title: 'نزاع جديد مسجل صوتياً',
-              description: 'تم تسجيل هذا النزاع عبر الميزة الصوتية',
+              title: title || 'بدون عنوان',
+              description: desc || '',
               voiceStatement: base64,
               createdAt: new Date().toISOString()
             });
@@ -789,13 +913,15 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
   const paidCount = payments.filter(p => p.month === currentMonth).length;
   const progress = (paidCount / members.length) * 100 || 0;
 
+  const isEmergency = assoc.isEmergencyFund;
+
   return (
     <div className="space-y-8">
       <div className="bento-card p-10">
         <div className="flex justify-between items-start mb-8">
-          <h2 className="text-xl font-black text-stone-800 tracking-tight">حالة الدفع الشهري</h2>
+          <h2 className="text-xl font-black text-stone-800 tracking-tight">{isEmergency ? 'حالة التبرعات الطارئة' : 'حالة الدفع الشهري'}</h2>
           <span className="bg-[#E8F5E9] text-[#2E7D32] px-4 py-1.5 rounded-full text-[10px] font-black uppercase tracking-widest">
-            مكتمل بنسبة {Math.round(progress)}%
+            {isEmergency ? `شارك ${paidCount} عضو` : `مكتمل بنسبة ${Math.round(progress)}%`}
           </span>
         </div>
         
@@ -818,8 +944,8 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
                 </div>
                 <div className="text-center">
                   <p className="text-xs font-black text-stone-800 tracking-tight">{m.name}</p>
-                  <p className={`text-[9px] mt-1 font-bold ${isPaid ? 'text-stone-400' : 'text-red-500 underline underline-offset-2'}`}>
-                    {isPaid ? 'تم الدفع' : 'لم يدفع بعد'}
+                  <p className={`text-[9px] mt-1 font-bold ${isPaid ? 'text-stone-400' : (isEmergency ? 'text-stone-400' : 'text-red-500 underline underline-offset-2')}`}>
+                    {isPaid ? (isEmergency ? 'تبرع' : 'تم الدفع') : (isEmergency ? 'لم يتبرع' : 'لم يدفع بعد')}
                   </p>
                 </div>
               </div>
@@ -829,7 +955,7 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
       </div>
 
       <div className="space-y-4">
-        <h3 className="text-[10px] uppercase tracking-[0.2em] font-black text-stone-400 px-2">قائمة السداد التفصيلية</h3>
+        <h3 className="text-[10px] uppercase tracking-[0.2em] font-black text-stone-400 px-2">{isEmergency ? 'قائمة التبرعات التفصيلية' : 'قائمة السداد التفصيلية'}</h3>
         <div className="space-y-3">
           {members.map(m => {
             const isPaid = payments.some(p => p.memberId === m.id && p.month === currentMonth);
@@ -848,14 +974,14 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
                 </div>
                 {isPaid ? (
                   <div className="bg-emerald-50 px-5 py-2 rounded-2xl">
-                    <span className="text-primary-green text-[10px] font-black uppercase tracking-widest">وصل رقمي</span>
+                    <span className="text-primary-green text-[10px] font-black uppercase tracking-widest">{isEmergency ? 'تم التبرع' : 'وصل رقمي'}</span>
                   </div>
                 ) : (
                   <button 
                     onClick={() => onMarkPaid(m.id!, currentMonth)}
-                    className="bg-primary-green text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl shadow-primary-green/10 active:scale-95 transition-all"
+                    className={`${isEmergency ? 'bg-red-500 shadow-red-500/10' : 'bg-primary-green shadow-primary-green/10'} text-white px-6 py-3 rounded-2xl text-[10px] font-black uppercase tracking-widest shadow-xl active:scale-95 transition-all`}
                   >
-                    تسجيل دفع
+                    {isEmergency ? 'تسجيل تبرع' : 'تسجيل دفع'}
                   </button>
                 )}
               </div>
@@ -867,7 +993,7 @@ function PaymentsList({ assoc, members, payments, onMarkPaid }: {
   );
 }
 
-function PayoutsList({ assoc, members }: { assoc: Association, members: Member[] }) {
+function PayoutsList({ assoc, members, payouts, onMarkReceived }: { assoc: Association, members: Member[], payouts: Payout[], onMarkReceived: (mId: string, month: string) => void }) {
   const currentMonth = new Date().toISOString().slice(0, 7);
   const isDirector = auth.currentUser?.uid === assoc.directorUid;
   const rotationOrder = assoc.rotationOrder || [];
@@ -887,19 +1013,38 @@ function PayoutsList({ assoc, members }: { assoc: Association, members: Member[]
 
   const currentReceiverId = rotationOrder[0];
   const currentReceiver = members.find(m => m.id === currentReceiverId) || members[0];
+  const hasReceived = currentReceiver ? payouts.some(p => p.memberId === currentReceiver.id && p.month === currentMonth) : false;
 
   return (
     <div className="space-y-8">
       {currentReceiver ? (
         <div className="bento-card-primary p-10 min-h-[300px] flex flex-col justify-between relative overflow-hidden">
-          <div className="relative z-10">
-            <h4 className="text-emerald-200 uppercase tracking-[0.2em] text-[10px] font-black mb-6">الدور القادم</h4>
-            <p className="text-5xl font-black mb-3 tracking-tighter">{currentReceiver.name}</p>
-            <p className="text-emerald-100/60 font-bold">تاريخ الاستحقاق المتوقع: {currentMonth}</p>
+          <div className="relative z-10 flex flex-col justify-between h-full">
+            <div>
+              <h4 className="text-emerald-200 uppercase tracking-[0.2em] text-[10px] font-black mb-6">الدور القادم</h4>
+              <p className="text-5xl font-black mb-3 tracking-tighter">{currentReceiver.name}</p>
+              <p className="text-emerald-100/60 font-bold">تاريخ الاستحقاق المتوقع: {currentMonth}</p>
+              
+              <div className="mt-12 bg-white/10 backdrop-blur-xl rounded-3xl p-6 border border-white/20 inline-block w-full">
+                <p className="text-[10px] mb-2 text-emerald-200 uppercase tracking-widest font-black">المبلغ المتوقع تسليمه</p>
+                <p className="text-4xl font-black">{assoc.totalAmount.toLocaleString()} <span className="text-lg font-medium">ريال</span></p>
+              </div>
+            </div>
             
-            <div className="mt-12 bg-white/10 backdrop-blur-xl rounded-3xl p-6 border border-white/20 inline-block w-full">
-              <p className="text-[10px] mb-2 text-emerald-200 uppercase tracking-widest font-black">المبلغ المتوقع تسليمه</p>
-              <p className="text-4xl font-black">{assoc.totalAmount.toLocaleString()} <span className="text-lg font-medium">ريال</span></p>
+            <div className="mt-8">
+              {hasReceived ? (
+                <div className="bg-white/20 backdrop-blur text-white px-6 py-4 rounded-2xl flex items-center justify-center gap-3">
+                  <CheckCircle2 className="w-5 h-5 text-emerald-300" />
+                  <span className="font-bold">تم تسليم واستلام المبلغ بنجاح</span>
+                </div>
+              ) : (
+                <button 
+                  onClick={() => onMarkReceived(currentReceiver.id!, currentMonth)}
+                  className="bg-white text-primary-green w-full py-4 rounded-2xl font-black shadow-xl active:scale-95 transition-all flex justify-center items-center gap-2"
+                >
+                  <Mic className="w-5 h-5" /> توثيق صوتي للاستلام
+                </button>
+              )}
             </div>
           </div>
           
@@ -1063,6 +1208,26 @@ function MemberProfileModal({
               )}
             </div>
           </div>
+
+          <div className="bento-card p-6">
+            <h3 className="text-xs font-black text-stone-400 uppercase tracking-widest mb-4">نغمة الإشعارات المخصصة</h3>
+            <select 
+              value={member.notificationSound || 'default'}
+              onChange={async (e) => {
+                await updateDoc(doc(db, 'associations', assoc.id!, 'members', member.id!), {
+                  notificationSound: e.target.value
+                });
+              }}
+              className="w-full bg-stone-50 border-stone-100 rounded-2xl py-3 px-4 font-bold outline-none focus:ring-2 focus:ring-primary-green/20 text-sm"
+            >
+              <option value="default">الافتراضية (رنين هادئ)</option>
+              <option value="urgent">عاجل (تنبيه قوي)</option>
+              <option value="success">نجاح (رنين مبهج)</option>
+              <option value="chime">رنين جرس (كلاسيكي)</option>
+              <option value="silent">صامت</option>
+            </select>
+            <p className="text-xs text-stone-400 font-bold mt-3">سيتم استخدام هذه النغمة عند إرسال إشعارات لهذا العضو تحديداً.</p>
+          </div>
         </div>
       </motion.div>
     </div>
@@ -1129,13 +1294,16 @@ function AddMemberForm({ assocId, onClose }: { assocId: string, onClose: () => v
 
 function VoiceRecorderModal({ isOpen, type, onClose, onSave }: {
   isOpen: boolean,
-  type: 'agreement' | 'payment',
+  type: 'agreement' | 'payment' | 'dispute' | 'dispute_response' | 'payout_receipt',
   onClose: () => void,
-  onSave: (base64: string) => void
+  onSave: (base64: string, title?: string, description?: string) => void
 }) {
   const [isRecording, setIsRecording] = useState(false);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [base64, setBase64] = useState<string | null>(null);
+  const [disputeTitle, setDisputeTitle] = useState('');
+  const [disputeDesc, setDisputeDesc] = useState('');
+
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const chunksRef = useRef<Blob[]>([]);
 
@@ -1176,40 +1344,60 @@ function VoiceRecorderModal({ isOpen, type, onClose, onSave }: {
       <motion.div 
         initial={{ opacity: 0, scale: 0.9 }}
         animate={{ opacity: 1, scale: 1 }}
-        className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 text-center space-y-6 shadow-2xl"
+        className="bg-white w-full max-w-sm rounded-[2.5rem] p-8 text-center space-y-4 shadow-2xl overflow-y-auto max-h-[90vh]"
       >
-        <div className="w-24 h-24 bg-[#E8F5E9] rounded-[2rem] flex items-center justify-center mx-auto relative">
-          <Mic className={`w-12 h-12 ${isRecording ? 'text-red-600 animate-pulse' : 'text-primary-green'}`} />
+        <div className="w-20 h-20 bg-[#E8F5E9] rounded-[2rem] flex items-center justify-center mx-auto relative">
+          <Mic className={`w-8 h-8 ${isRecording ? 'text-red-600 animate-pulse' : 'text-primary-green'}`} />
           {isRecording && (
-            <div className="absolute top-0 right-0 w-4 h-4 bg-red-600 rounded-full animate-ping"></div>
+            <div className="absolute top-0 right-0 w-3 h-3 bg-red-600 rounded-full animate-ping"></div>
           )}
         </div>
 
         <div className="space-y-3">
-          <h3 className="text-3xl font-black text-stone-900 tracking-tighter">
+          <h3 className="text-2xl font-black text-stone-900 tracking-tighter">
             {type === 'agreement' ? 'تسجيل الالتزام' 
              : type === 'payment' ? 'توثيق الدفع'
+             : type === 'payout_receipt' ? 'استلام القسط'
              : type === 'dispute' ? 'تسجيل الخلاف / الملاحظة'
              : 'تسجيل الرد'}
           </h3>
-          <p className="text-stone-500 font-bold px-4 leading-relaxed bg-stone-50 py-4 rounded-3xl text-sm italic border border-stone-100">
+          <p className="text-stone-500 font-bold px-4 leading-relaxed bg-stone-50 py-3 rounded-2xl text-xs flex justify-center items-center h-full border border-stone-100">
             {type === 'agreement' 
-              ? 'قل بلهجة واضحة: "قبلت وأنا ملتزم بالدفع في الموعد المحدد لجمعيتي." ' 
+              ? 'قل بلهجة واضحة: "قبلت وأنا ملتزم بالدفع..." ' 
               : type === 'payment'
-              ? 'قل بلهجة واضحة: "أقر بأني سلمت القسط لجمعيتي لشهر كذا نقداً وبالوفاء."'
+              ? 'قل بلهجة واضحة: "أقر بأني سلمت القسط..."'
+              : type === 'payout_receipt'
+              ? 'قل بلهجة واضحة: "أقر بأني استلمت المبلغ كاملاً..."'
               : type === 'dispute'
-              ? 'أفصح عن المشكلة بوضوح واختصار.'
+              ? 'الرجاء توضيح تفاصيل المشكلة بصوتك.'
               : 'قم بالرد على النزاع بصوتك لحل المشكلة.'}
           </p>
         </div>
 
-        <div className="py-8">
+        {type === 'dispute' && (
+          <div className="space-y-3 text-right">
+            <input 
+              placeholder="عنوان المشكلة"
+              className="w-full bg-stone-50 border-stone-100 rounded-2xl py-3 px-4 font-bold outline-none focus:ring-2 focus:ring-red-500/20 text-sm"
+              value={disputeTitle}
+              onChange={e => setDisputeTitle(e.target.value)}
+            />
+            <textarea 
+              placeholder="وصف المشكلة"
+              className="w-full bg-stone-50 border-stone-100 rounded-2xl py-3 px-4 font-bold outline-none focus:ring-2 focus:ring-red-500/20 text-sm min-h-[80px]"
+              value={disputeDesc}
+              onChange={e => setDisputeDesc(e.target.value)}
+            />
+          </div>
+        )}
+
+        <div className="py-4">
           {audioUrl ? (
             <div className="space-y-4">
-              <audio src={audioUrl} controls className="w-full h-12 bg-stone-100 rounded-full" />
+              <audio src={audioUrl} controls className="w-full h-10 bg-stone-100 rounded-full" />
               <button 
                 onClick={() => { setAudioUrl(null); setBase64(null); }}
-                className="text-stone-400 font-bold hover:text-stone-800 transition-colors"
+                className="text-stone-400 text-sm font-bold hover:text-stone-800 transition-colors"
               >
                 إعادة التسجيل
               </button>
@@ -1217,26 +1405,26 @@ function VoiceRecorderModal({ isOpen, type, onClose, onSave }: {
           ) : (
             <button 
               onClick={isRecording ? stopRecording : startRecording}
-              className={`w-24 h-24 rounded-full flex items-center justify-center transition-all shadow-xl active:scale-95 ${
+              className={`w-16 h-16 rounded-full flex items-center justify-center transition-all shadow-xl active:scale-95 mx-auto ${
                 isRecording ? 'bg-red-600 text-white shadow-red-100' : 'bg-stone-900 text-white shadow-stone-200'
               }`}
             >
-              {isRecording ? <Square className="w-10 h-10" /> : <Play className="w-10 h-10 ml-1" />}
+              {isRecording ? <Square className="w-6 h-6" /> : <Play className="w-6 h-6 ml-1" />}
             </button>
           )}
         </div>
 
-        <div className="flex gap-4 pt-4">
+        <div className="flex gap-4 pt-2">
           <button 
-            disabled={!base64}
-            onClick={() => onSave(base64!)}
-            className="flex-1 bg-primary-green text-white py-5 rounded-[1.5rem] font-black disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-xl shadow-primary-green/10 active:scale-95"
+            disabled={!base64 || (type === 'dispute' && !disputeTitle)}
+            onClick={() => onSave(base64!, disputeTitle, disputeDesc)}
+            className="flex-1 bg-primary-green text-white py-4 rounded-[1.2rem] font-black disabled:opacity-30 disabled:cursor-not-allowed transition-all shadow-xl shadow-primary-green/10 active:scale-95"
           >
-            حفظ التسجيل
+            حفظ
           </button>
           <button 
             onClick={onClose}
-            className="px-8 py-5 font-black text-stone-400 hover:text-stone-800 transition-colors"
+            className="px-6 py-4 font-black text-stone-400 hover:text-stone-800 transition-colors"
           >
             خروج
           </button>
